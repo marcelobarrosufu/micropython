@@ -48,13 +48,25 @@
 #include "py/obj.h"
 #include "py/runtime.h"
 
+static bool ieee154_is_enabled = false;
+
 static mp_obj_t ieee154_init(void) 
 {
+    if(!ieee154_is_enabled) 
+    {
+        esp_ieee802154_enable();
+        ieee154_is_enabled = true;
+    }
     return mp_const_none;
 }
 
 static mp_obj_t ieee154_deinit(void) 
 {
+    if (ieee154_is_enabled) 
+    {
+        esp_ieee802154_disable();
+        ieee154_is_enabled = false;
+    }
     return mp_const_none;
 }
 
