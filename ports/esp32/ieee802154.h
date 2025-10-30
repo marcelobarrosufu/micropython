@@ -26,4 +26,4 @@
 
 #include "py/obj.h"
 
-mp_obj_t iee154_deinit(mp_obj_t _);
+mp_obj_t ieee802154_deinit(mp_obj_t _);

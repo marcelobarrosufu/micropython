@@ -43,20 +43,20 @@
 
 #include "mpconfigport.h"
 
-#if MICROPY_PY_IEEE80254
+#if MICROPY_PY_IEEE802154
 
 #include "py/obj.h"
 #include "py/runtime.h"
 
-struct ieee154_config_s
+typedef struct ieee802154_config_s
 {
     uint8_t channel;
     uint16_t panid;
     uint16_t short_address;
     bool enabled;
-} ieee154_config_t;
+} ieee802154_config_t;
 
-static ieee154_config_t ieee154_config = 
+static ieee802154_config_t ieee802154_config = 
 {
     .channel = 11,
     .panid = 1000,
@@ -64,21 +64,21 @@ static ieee154_config_t ieee154_config =
     .enabled = false,
 };
 
-static void ieee154_check_if_enabled(void)
+static void ieee802154_check_if_enabled(void)
 {
-    if (!ieee154_config.enabled) 
+    if (!ieee802154_config.enabled) 
     {
         mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("IEEE 802.15.4 is not initialized"));
     }
 }
 
-static mp_obj_t ieee154_init(void) 
+static mp_obj_t ieee802154_init(void) 
 {
-    if(!ieee154_config.enabled) 
+    if(!ieee802154_config.enabled) 
     {
         if(esp_ieee802154_enable() == ESP_OK)
         {
-            ieee154_config.enabled = true;
+            ieee802154_config.enabled = true;
         }
         else
         {
@@ -89,13 +89,13 @@ static mp_obj_t ieee154_init(void)
     return mp_const_none;
 }
 
-static mp_obj_t ieee154_deinit(void) 
+static mp_obj_t ieee802154_deinit(void) 
 {
-    if (ieee154_config.enabled) 
+    if (ieee802154_config.enabled) 
     {
         if(esp_ieee802154_disable() == ESP_OK)
         {
-            ieee154_config.enabled = false;
+            ieee802154_config.enabled = false;
         }
         else
         {
@@ -106,9 +106,9 @@ static mp_obj_t ieee154_deinit(void)
     return mp_const_none;
 }
 
-static mp_obj_t ieee154_set_channel(mp_obj_t channel_obj) 
+static mp_obj_t ieee802154_set_channel(mp_obj_t channel_obj) 
 {
-    ieee154_check_if_enabled();
+    ieee802154_check_if_enabled();
 
     mp_int_t channel = mp_obj_get_int(channel_obj);
     if (channel < 11 || channel > 26) 
@@ -119,7 +119,7 @@ static mp_obj_t ieee154_set_channel(mp_obj_t channel_obj)
     esp_err_t ret = esp_ieee802154_set_channel((uint8_t)channel);
     if (ret == ESP_OK)
     {
-        ieee154_config.channel = (uint8_t)channel;
+        ieee802154_config.channel = (uint8_t)channel;
     } 
     else
     {
@@ -129,18 +129,18 @@ static mp_obj_t ieee154_set_channel(mp_obj_t channel_obj)
     return mp_const_none;
 }
 
-static mp_obj_t ieee154_get_channel(void) 
+static mp_obj_t ieee802154_get_channel(void) 
 {
-    ieee154_check_if_enabled();
+    ieee802154_check_if_enabled();
 
     uint8_t channel = esp_ieee802154_get_channel();
 
     return mp_obj_new_int(channel);
 }
 
-static mp_obj_t ieee154_set_panid(mp_obj_t panid_obj) 
+static mp_obj_t ieee802154_set_panid(mp_obj_t panid_obj) 
 {
-    ieee154_check_if_enabled();
+    ieee802154_check_if_enabled();
 
     mp_int_t panid = mp_obj_get_int(panid_obj);
     if (panid < 0 || panid > 0xFFFF) 
@@ -151,7 +151,7 @@ static mp_obj_t ieee154_set_panid(mp_obj_t panid_obj)
     esp_err_t ret = esp_ieee802154_set_panid((uint16_t)panid);
     if (ret == ESP_OK) 
     {
-        ieee154_config.panid = (uint16_t)panid;
+        ieee802154_config.panid = (uint16_t)panid;
     } 
     else
     {
@@ -161,18 +161,18 @@ static mp_obj_t ieee154_set_panid(mp_obj_t panid_obj)
     return mp_const_none;
 }
 
-static mp_obj_t ieee154_get_panid(void) 
+static mp_obj_t ieee802154_get_panid(void) 
 {
-    ieee154_check_if_enabled();
+    ieee802154_check_if_enabled();
 
     uint16_t panid = esp_ieee802154_get_panid();
 
     return mp_obj_new_int(panid);
 }
 
-static mp_obj_t ieee154_set_short_addr(mp_obj_t short_addr_obj) 
+static mp_obj_t ieee802154_set_short_addr(mp_obj_t short_addr_obj) 
 {
-    ieee154_check_if_enabled();
+    ieee802154_check_if_enabled();
 
     mp_int_t short_addr = mp_obj_get_int(short_addr_obj);
     if (short_addr < 0 || short_addr > 0xFFFF) 
@@ -183,7 +183,7 @@ static mp_obj_t ieee154_set_short_addr(mp_obj_t short_addr_obj)
     esp_err_t ret = esp_ieee802154_set_short_address((uint16_t)short_addr);
     if (ret == ESP_OK) 
     {
-        ieee154_config.short_address = (uint16_t)short_addr;
+        ieee802154_config.short_address = (uint16_t)short_addr;
     } 
     else
     {
@@ -193,52 +193,52 @@ static mp_obj_t ieee154_set_short_addr(mp_obj_t short_addr_obj)
     return mp_const_none;
 }
 
-static mp_obj_t ieee154_get_short_addr(void) 
+static mp_obj_t ieee802154_get_short_addr(void) 
 {
-    ieee154_check_if_enabled();
+    ieee802154_check_if_enabled();
 
     uint16_t short_addr = esp_ieee802154_get_short_address();
 
     return mp_obj_new_int(short_addr);
 }
 
-static mp_obj_t ieee154_send_msg(mp_obj_t payload_obj, mp_obj_t dst_addr, mp_obj_t timeout_ms)
+static mp_obj_t ieee802154_send_msg(mp_obj_t payload_obj, mp_obj_t dst_addr, mp_obj_t timeout_ms)
 {
-    ieee154_check_if_enabled();
+    ieee802154_check_if_enabled();
 
     return mp_const_none;
 }
 
-static MP_DEFINE_CONST_FUN_OBJ_0(ieee154_init_obj, ieee154_init);
-static MP_DEFINE_CONST_FUN_OBJ_0(ieee154_deinit_obj, ieee154_deinit);
-static MP_DEFINE_CONST_FUN_OBJ_1(ieee154_set_channel_obj, ieee154_set_channel);
-static MP_DEFINE_CONST_FUN_OBJ_0(ieee154_get_channel_obj, ieee154_get_channel);
-static MP_DEFINE_CONST_FUN_OBJ_1(ieee154_set_panid_obj, ieee154_set_panid);
-static MP_DEFINE_CONST_FUN_OBJ_0(ieee154_get_panid_obj, ieee154_get_panid);
-static MP_DEFINE_CONST_FUN_OBJ_1(ieee154_set_short_addr_obj, ieee154_set_short_addr);
-static MP_DEFINE_CONST_FUN_OBJ_0(ieee154_get_short_addr_obj, ieee154_get_short_addr);
+static MP_DEFINE_CONST_FUN_OBJ_0(ieee802154_init_obj, ieee802154_init);
+static MP_DEFINE_CONST_FUN_OBJ_0(ieee802154_deinit_obj, ieee802154_deinit);
+static MP_DEFINE_CONST_FUN_OBJ_1(ieee802154_set_channel_obj, ieee802154_set_channel);
+static MP_DEFINE_CONST_FUN_OBJ_0(ieee802154_get_channel_obj, ieee802154_get_channel);
+static MP_DEFINE_CONST_FUN_OBJ_1(ieee802154_set_panid_obj, ieee802154_set_panid);
+static MP_DEFINE_CONST_FUN_OBJ_0(ieee802154_get_panid_obj, ieee802154_get_panid);
+static MP_DEFINE_CONST_FUN_OBJ_1(ieee802154_set_short_addr_obj, ieee802154_set_short_addr);
+static MP_DEFINE_CONST_FUN_OBJ_0(ieee802154_get_short_addr_obj, ieee802154_get_short_addr);
 
-static const mp_rom_map_elem_t ieee154_module_globals_table[] = {
+static const mp_rom_map_elem_t ieee802154_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_ieee154) },
-    { MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&ieee154_init_obj) },
-    { MP_ROM_QSTR(MP_QSTR_deinit), MP_ROM_PTR(&ieee154_deinit_obj) },
-    { MP_ROM_QSTR(MP_QSTR_set_channel), MP_ROM_PTR(&ieee154_set_channel_obj) },
-    { MP_ROM_QSTR(MP_QSTR_get_channel), MP_ROM_PTR(&ieee154_get_channel_obj) },
-    { MP_ROM_QSTR(MP_QSTR_set_panid), MP_ROM_PTR(&ieee154_set_panid_obj) },
-    { MP_ROM_QSTR(MP_QSTR_get_panid), MP_ROM_PTR(&ieee154_get_panid_obj) },
-    { MP_ROM_QSTR(MP_QSTR_set_short_addr), MP_ROM_PTR(&ieee154_set_short_addr_obj) },
-    { MP_ROM_QSTR(MP_QSTR_get_short_addr), MP_ROM_PTR(&ieee154_get_short_addr_obj) },
+    { MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&ieee802154_init_obj) },
+    { MP_ROM_QSTR(MP_QSTR_deinit), MP_ROM_PTR(&ieee802154_deinit_obj) },
+    { MP_ROM_QSTR(MP_QSTR_set_channel), MP_ROM_PTR(&ieee802154_set_channel_obj) },
+    { MP_ROM_QSTR(MP_QSTR_get_channel), MP_ROM_PTR(&ieee802154_get_channel_obj) },
+    { MP_ROM_QSTR(MP_QSTR_set_panid), MP_ROM_PTR(&ieee802154_set_panid_obj) },
+    { MP_ROM_QSTR(MP_QSTR_get_panid), MP_ROM_PTR(&ieee802154_get_panid_obj) },
+    { MP_ROM_QSTR(MP_QSTR_set_short_addr), MP_ROM_PTR(&ieee802154_set_short_addr_obj) },
+    { MP_ROM_QSTR(MP_QSTR_get_short_addr), MP_ROM_PTR(&ieee802154_get_short_addr_obj) },
 };
 
-static MP_DEFINE_CONST_DICT(ieee154_module_globals, ieee154_module_globals_table);
+static MP_DEFINE_CONST_DICT(ieee802154_module_globals, ieee802154_module_globals_table);
 
-const mp_obj_module_t ieee154_user_cmodule = {
+const mp_obj_module_t ieee802154_user_cmodule = {
     .base = { &mp_type_module },
-    .globals = (mp_obj_dict_t *)&ieee154_module_globals,
+    .globals = (mp_obj_dict_t *)&ieee802154_module_globals,
 };
 
 // Registro no MicroPython
-MP_REGISTER_MODULE(MP_QSTR_ieee154, ieee154_user_cmodule);
+MP_REGISTER_MODULE(MP_QSTR_ieee154, ieee802154_user_cmodule);
 
 
-#endif // MICROPY_PY_IEEE80254
+#endif // MICROPY_PY_IEEE802154
