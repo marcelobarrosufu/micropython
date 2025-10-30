@@ -202,6 +202,13 @@ static mp_obj_t ieee154_get_short_addr(void)
     return mp_obj_new_int(short_addr);
 }
 
+static mp_obj_t ieee154_send_msg(mp_obj_t payload_obj, mp_obj_t dst_addr, mp_obj_t timeout_ms)
+{
+    ieee154_check_if_enabled();
+
+    return mp_const_none;
+}
+
 static MP_DEFINE_CONST_FUN_OBJ_0(ieee154_init_obj, ieee154_init);
 static MP_DEFINE_CONST_FUN_OBJ_0(ieee154_deinit_obj, ieee154_deinit);
 static MP_DEFINE_CONST_FUN_OBJ_1(ieee154_set_channel_obj, ieee154_set_channel);
