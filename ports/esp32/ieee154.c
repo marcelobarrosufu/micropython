@@ -48,11 +48,25 @@
 #include "py/obj.h"
 #include "py/runtime.h"
 
-static bool ieee154_is_enabled = false;
+struct ieee154_config_s
+{
+    uint8_t channel;
+    uint16_t panid;
+    uint16_t short_address;
+    bool enabled;
+} ieee154_config_t;
+
+static ieee154_config_t ieee154_config = 
+{
+    .channel = 11,
+    .panid = 1000,
+    .short_address = 10000,
+    .enabled = false,
+};
 
 static void ieee154_check_if_enabled(void)
 {
-    if (!ieee154_is_enabled) 
+    if (!ieee154_config.enabled) 
     {
         mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("IEEE 802.15.4 is not initialized"));
     }
@@ -60,11 +74,11 @@ static void ieee154_check_if_enabled(void)
 
 static mp_obj_t ieee154_init(void) 
 {
-    if(!ieee154_is_enabled) 
+    if(!ieee154_config.enabled) 
     {
         if(esp_ieee802154_enable() == ESP_OK)
         {
-            ieee154_is_enabled = true;
+            ieee154_config.enabled = true;
         }
         else
         {
@@ -77,11 +91,11 @@ static mp_obj_t ieee154_init(void)
 
 static mp_obj_t ieee154_deinit(void) 
 {
-    if (ieee154_is_enabled) 
+    if (ieee154_config.enabled) 
     {
         if(esp_ieee802154_disable() == ESP_OK)
         {
-            ieee154_is_enabled = false;
+            ieee154_config.enabled = false;
         }
         else
         {
@@ -103,7 +117,11 @@ static mp_obj_t ieee154_set_channel(mp_obj_t channel_obj)
     }
 
     esp_err_t ret = esp_ieee802154_set_channel((uint8_t)channel);
-    if (ret != ESP_OK) 
+    if (ret == ESP_OK)
+    {
+        ieee154_config.channel = (uint8_t)channel;
+    } 
+    else
     {
         mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("Failed to set channel"));
     }
@@ -131,7 +149,11 @@ static mp_obj_t ieee154_set_panid(mp_obj_t panid_obj)
     }
 
     esp_err_t ret = esp_ieee802154_set_panid((uint16_t)panid);
-    if (ret != ESP_OK) 
+    if (ret == ESP_OK) 
+    {
+        ieee154_config.panid = (uint16_t)panid;
+    } 
+    else
     {
         mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("Failed to set PANID"));
     }
@@ -159,7 +181,11 @@ static mp_obj_t ieee154_set_short_addr(mp_obj_t short_addr_obj)
     }
 
     esp_err_t ret = esp_ieee802154_set_short_address((uint16_t)short_addr);
-    if (ret != ESP_OK) 
+    if (ret == ESP_OK) 
+    {
+        ieee154_config.short_address = (uint16_t)short_addr;
+    } 
+    else
     {
         mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("Failed to set short address"));
     }
