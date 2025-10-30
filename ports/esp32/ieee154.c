@@ -50,13 +50,28 @@
 
 static bool ieee154_is_enabled = false;
 
+static void ieee154_check_if_enabled(void)
+{
+    if (!ieee154_is_enabled) 
+    {
+        mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("IEEE 802.15.4 is not initialized"));
+    }
+}
+
 static mp_obj_t ieee154_init(void) 
 {
     if(!ieee154_is_enabled) 
     {
-        esp_ieee802154_enable();
-        ieee154_is_enabled = true;
+        if(esp_ieee802154_enable() == ESP_OK)
+        {
+            ieee154_is_enabled = true;
+        }
+        else
+        {
+            mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("Failed to enable IEEE 802.15.4"));
+        }
     }
+
     return mp_const_none;
 }
 
@@ -64,19 +79,122 @@ static mp_obj_t ieee154_deinit(void)
 {
     if (ieee154_is_enabled) 
     {
-        esp_ieee802154_disable();
-        ieee154_is_enabled = false;
+        if(esp_ieee802154_disable() == ESP_OK)
+        {
+            ieee154_is_enabled = false;
+        }
+        else
+        {
+            mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("Failed to disable IEEE 802.15.4"));
+        }
     }
+
     return mp_const_none;
+}
+
+static mp_obj_t ieee154_set_channel(mp_obj_t channel_obj) 
+{
+    ieee154_check_if_enabled();
+
+    mp_int_t channel = mp_obj_get_int(channel_obj);
+    if (channel < 11 || channel > 26) 
+    {
+        mp_raise_msg(&mp_type_ValueError, MP_ERROR_TEXT("Channel must be between 11 and 26"));
+    }
+
+    esp_err_t ret = esp_ieee802154_set_channel((uint8_t)channel);
+    if (ret != ESP_OK) 
+    {
+        mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("Failed to set channel"));
+    }
+
+    return mp_const_none;
+}
+
+static mp_obj_t ieee154_get_channel(void) 
+{
+    ieee154_check_if_enabled();
+
+    uint8_t channel = esp_ieee802154_get_channel();
+
+    return mp_obj_new_int(channel);
+}
+
+static mp_obj_t ieee154_set_panid(mp_obj_t panid_obj) 
+{
+    ieee154_check_if_enabled();
+
+    mp_int_t panid = mp_obj_get_int(panid_obj);
+    if (panid < 0 || panid > 0xFFFF) 
+    {
+        mp_raise_msg(&mp_type_ValueError, MP_ERROR_TEXT("PANID must be between 0 and 65535"));
+    }
+
+    esp_err_t ret = esp_ieee802154_set_panid((uint16_t)panid);
+    if (ret != ESP_OK) 
+    {
+        mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("Failed to set PANID"));
+    }
+
+    return mp_const_none;
+}
+
+static mp_obj_t ieee154_get_panid(void) 
+{
+    ieee154_check_if_enabled();
+
+    uint16_t panid = esp_ieee802154_get_panid();
+
+    return mp_obj_new_int(panid);
+}
+
+static mp_obj_t ieee154_set_short_addr(mp_obj_t short_addr_obj) 
+{
+    ieee154_check_if_enabled();
+
+    mp_int_t short_addr = mp_obj_get_int(short_addr_obj);
+    if (short_addr < 0 || short_addr > 0xFFFF) 
+    {
+        mp_raise_msg(&mp_type_ValueError, MP_ERROR_TEXT("Short address must be between 0 and 65535"));
+    }
+
+    esp_err_t ret = esp_ieee802154_set_short_address((uint16_t)short_addr);
+    if (ret != ESP_OK) 
+    {
+        mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("Failed to set short address"));
+    }
+
+    return mp_const_none;
+}
+
+static mp_obj_t ieee154_get_short_addr(void) 
+{
+    ieee154_check_if_enabled();
+
+    uint16_t short_addr = esp_ieee802154_get_short_address();
+
+    return mp_obj_new_int(short_addr);
 }
 
 static MP_DEFINE_CONST_FUN_OBJ_0(ieee154_init_obj, ieee154_init);
 static MP_DEFINE_CONST_FUN_OBJ_0(ieee154_deinit_obj, ieee154_deinit);
+static MP_DEFINE_CONST_FUN_OBJ_1(ieee154_set_channel_obj, ieee154_set_channel);
+static MP_DEFINE_CONST_FUN_OBJ_0(ieee154_get_channel_obj, ieee154_get_channel);
+static MP_DEFINE_CONST_FUN_OBJ_1(ieee154_set_panid_obj, ieee154_set_panid);
+static MP_DEFINE_CONST_FUN_OBJ_0(ieee154_get_panid_obj, ieee154_get_panid);
+static MP_DEFINE_CONST_FUN_OBJ_1(ieee154_set_short_addr_obj, ieee154_set_short_addr);
+static MP_DEFINE_CONST_FUN_OBJ_0(ieee154_get_short_addr_obj, ieee154_get_short_addr);
 
 static const mp_rom_map_elem_t ieee154_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_ieee154) },
     { MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&ieee154_init_obj) },
     { MP_ROM_QSTR(MP_QSTR_deinit), MP_ROM_PTR(&ieee154_deinit_obj) },
+    { MP_ROM_QSTR(MP_QSTR_set_channel), MP_ROM_PTR(&ieee154_set_channel_obj) },
+    { MP_ROM_QSTR(MP_QSTR_get_channel), MP_ROM_PTR(&ieee154_get_channel_obj) },
+    { MP_ROM_QSTR(MP_QSTR_set_panid), MP_ROM_PTR(&ieee154_set_panid_obj) },
+    { MP_ROM_QSTR(MP_QSTR_get_panid), MP_ROM_PTR(&ieee154_get_panid_obj) },
+    { MP_ROM_QSTR(MP_QSTR_set_short_addr), MP_ROM_PTR(&ieee154_set_short_addr_obj) },
+    { MP_ROM_QSTR(MP_QSTR_get_short_addr), MP_ROM_PTR(&ieee154_get_short_addr_obj) },
 };
 
 static MP_DEFINE_CONST_DICT(ieee154_module_globals, ieee154_module_globals_table);
