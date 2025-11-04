@@ -71,12 +71,11 @@ typedef struct ieee802154_ctrl_s
     uint8_t rx[128];
     int8_t tx_pwr;
     SemaphoreHandle_t tx_sem;
+    SemaphoreHandle_t rx_sem;
     volatile bool tx_ok;
+    volatile bool rx_ok;
     uint32_t tx_timeout_ms;
-    QueueHandle_t rx_queue;
 } ieee802154_ctrl_t;
-
-MP_DEFINE_EXCEPTION(QueueEmpty, Exception);
 
 static ieee802154_ctrl_t ieee802154_ctrl = 
 {
@@ -90,12 +89,26 @@ static ieee802154_ctrl_t ieee802154_ctrl =
     .tx_ok = false,
 };
 
+MP_DEFINE_EXCEPTION(QueueEmpty, Exception);
+
+static ieee802154_frame_t msg;
+
 static void ieee802154_check_if_enabled(void)
 {
     if (!ieee802154_ctrl.enabled) 
     {
         mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("IEEE 802.15.4 is not initialized"));
     }
+}
+
+static void ieee802154_set_rx_status(bool in_progress)
+{
+    ieee802154_ctrl.rx_ok = in_progress;
+}
+
+static bool ieee802154_get_rx_status(void)
+{
+    return ieee802154_ctrl.rx_ok;
 }
 
 static mp_obj_t ieee802154_init(void) 
@@ -105,23 +118,24 @@ static mp_obj_t ieee802154_init(void)
         ieee802154_ctrl.tx_sem = xSemaphoreCreateBinary();
         if(ieee802154_ctrl.tx_sem) 
         {
-            ieee802154_ctrl.rx_queue = xQueueCreate(RX_QUEUE_LENGTH, sizeof(ieee802154_frame_t));
-            if(ieee802154_ctrl.rx_queue)
+            ieee802154_ctrl.rx_sem = xSemaphoreCreateBinary();
+            if(ieee802154_ctrl.rx_sem)
             {
                 if(esp_ieee802154_enable() == ESP_OK)
                 {
                     esp_ieee802154_set_ack_timeout(2*16);
-                    esp_ieee802154_set_promiscuous(true);
+                    esp_ieee802154_set_promiscuous(false);
                     esp_ieee802154_set_rx_when_idle(true);
                     esp_ieee802154_set_coordinator(false);
                     esp_ieee802154_receive();
+                    ieee802154_set_rx_status(true);
                 
                     ieee802154_ctrl.enabled = true;
                 }
                 else
                 {
                     vSemaphoreDelete(ieee802154_ctrl.tx_sem);
-                    vQueueDelete(ieee802154_ctrl.rx_queue);
+                    vSemaphoreDelete(ieee802154_ctrl.rx_sem);
                     mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("Failed to enable IEEE 802.15.4"));
                 }
             }
@@ -147,7 +161,7 @@ static mp_obj_t ieee802154_deinit(void)
         if(esp_ieee802154_disable() == ESP_OK)
         {
             vSemaphoreDelete(ieee802154_ctrl.tx_sem);
-            vQueueDelete(ieee802154_ctrl.rx_queue);
+            vSemaphoreDelete(ieee802154_ctrl.rx_sem);
 
             ieee802154_ctrl.enabled = false;
         }
@@ -319,9 +333,9 @@ static bool ieee802154_frame_filter(uint8_t *data, esp_ieee802154_frame_info_t *
         msg->src_addr = src_addr;
         msg->seq_num = data[3];
         msg->len = len - 11;
-    
+
         memcpy(msg->data, &data[10], msg->len);
-        
+
         return true;
     }
 
@@ -337,14 +351,11 @@ void esp_ieee802154_receive_done(uint8_t *data, esp_ieee802154_frame_info_t *fra
     mp_hal_stdout_tx_str("\n");
     #endif
 
-    ieee802154_frame_t msg;
-
-    if(ieee802154_frame_filter(data, frame_info, &msg))
+    // only when false app is waiting for a message
+    if(ieee802154_get_rx_status() == false)
     {
-        if(xQueueSendToBackFromISR(ieee802154_ctrl.rx_queue, &msg, NULL) != pdPASS)
-        {
-            mp_printf(&mp_plat_print, "Queue full !\n");
-        }
+        ieee802154_set_rx_status(ieee802154_frame_filter(data, frame_info, &msg));
+        xSemaphoreGiveFromISR(ieee802154_ctrl.rx_sem, NULL);
     }
 
     esp_ieee802154_receive_handle_done(data);
@@ -352,18 +363,26 @@ void esp_ieee802154_receive_done(uint8_t *data, esp_ieee802154_frame_info_t *fra
 
 static mp_obj_t ieee802154_recv_msg(mp_obj_t timeout_ms_obj)
 {
+    bool status = false;
     ieee802154_check_if_enabled();
 
     uint32_t timeout_ms = mp_obj_get_int(timeout_ms_obj);
     
-    ieee802154_frame_t msg;
+    ieee802154_set_rx_status(false);
 
-    if (xQueueReceive(ieee802154_ctrl.rx_queue, &msg, pdMS_TO_TICKS(timeout_ms)) != pdPASS)
+    if((xSemaphoreTake(ieee802154_ctrl.rx_sem, pdMS_TO_TICKS(timeout_ms)) == pdTRUE) && (ieee802154_get_rx_status() == true))
+    {
+        status = true;
+    }
+    // blocking other messages reception
+    ieee802154_set_rx_status(true);
+
+    if(status == false)
     {
         mp_raise_type(&mp_type_QueueEmpty);
     }
-    return mp_obj_new_bytes(msg.data, msg.len);
 
+    return mp_obj_new_bytes(msg.data, msg.len);
 }
 
 static void ieee802154_set_tx_status(bool in_progress)
