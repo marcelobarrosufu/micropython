@@ -49,7 +49,16 @@
 
 #if MICROPY_PY_IEEE802154
 
-#define DBG_ON 1
+#define DBG_ON          1
+#define MAX_FRAME_LEN   127
+#define RX_QUEUE_LENGTH 5
+
+typedef struct {
+    uint8_t data[MAX_FRAME_LEN];
+    uint16_t len;
+    uint16_t src_addr;
+    uint8_t seq_num;
+} ieee802154_frame_t;
 
 typedef struct ieee802154_ctrl_s
 {
@@ -61,7 +70,13 @@ typedef struct ieee802154_ctrl_s
     uint8_t tx[128];
     uint8_t rx[128];
     int8_t tx_pwr;
+    SemaphoreHandle_t tx_sem;
+    volatile bool tx_ok;
+    uint32_t tx_timeout_ms;
+    QueueHandle_t rx_queue;
 } ieee802154_ctrl_t;
+
+MP_DEFINE_EXCEPTION(QueueEmpty, Exception);
 
 static ieee802154_ctrl_t ieee802154_ctrl = 
 {
@@ -71,6 +86,8 @@ static ieee802154_ctrl_t ieee802154_ctrl =
     .enabled = false,
     .seq_num = 0,
     .tx_pwr = 20,
+    .tx_timeout_ms = 100,
+    .tx_ok = false,
 };
 
 static void ieee802154_check_if_enabled(void)
@@ -85,17 +102,38 @@ static mp_obj_t ieee802154_init(void)
 {
     if(!ieee802154_ctrl.enabled) 
     {
-        if(esp_ieee802154_enable() == ESP_OK)
+        ieee802154_ctrl.tx_sem = xSemaphoreCreateBinary();
+        if(ieee802154_ctrl.tx_sem) 
         {
-            ieee802154_ctrl.enabled = true;
-            esp_ieee802154_set_ack_timeout(2*16);
-            esp_ieee802154_set_promiscuous(false);
-            esp_ieee802154_set_rx_when_idle(true);
-            esp_ieee802154_set_coordinator(false);
+            ieee802154_ctrl.rx_queue = xQueueCreate(RX_QUEUE_LENGTH, sizeof(ieee802154_frame_t));
+            if(ieee802154_ctrl.rx_queue)
+            {
+                if(esp_ieee802154_enable() == ESP_OK)
+                {
+                    esp_ieee802154_set_ack_timeout(2*16);
+                    esp_ieee802154_set_promiscuous(true);
+                    esp_ieee802154_set_rx_when_idle(true);
+                    esp_ieee802154_set_coordinator(false);
+                    esp_ieee802154_receive();
+                
+                    ieee802154_ctrl.enabled = true;
+                }
+                else
+                {
+                    vSemaphoreDelete(ieee802154_ctrl.tx_sem);
+                    vQueueDelete(ieee802154_ctrl.rx_queue);
+                    mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("Failed to enable IEEE 802.15.4"));
+                }
+            }
+            else
+            {
+                vSemaphoreDelete(ieee802154_ctrl.tx_sem);
+                mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("Failed to enable IEEE 802.15.4"));
+            }
         }
         else
         {
-            mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("Failed to enable IEEE 802.15.4"));
+            mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("Failed to create TX semaphore"));
         }
     }
 
@@ -108,6 +146,9 @@ static mp_obj_t ieee802154_deinit(void)
     {
         if(esp_ieee802154_disable() == ESP_OK)
         {
+            vSemaphoreDelete(ieee802154_ctrl.tx_sem);
+            vQueueDelete(ieee802154_ctrl.rx_queue);
+
             ieee802154_ctrl.enabled = false;
         }
         else
@@ -247,6 +288,45 @@ static uint8_t ieee802154_get_next_seq_number(bool retry)
     return ieee802154_ctrl.seq_num;
 }
 
+static bool ieee802154_frame_filter(uint8_t *data, esp_ieee802154_frame_info_t *frame_info, ieee802154_frame_t *msg)
+{
+    uint8_t len = data[0];
+
+    if(len < 11)
+        return false;
+    // XCXX XTTT 41
+    // SSXXDDXX. 88
+    // filter: 
+    // - pand id compression
+    // - only compressed address source and destination addresses
+    // - only to this node or broadcast
+    // - same pan id
+    // - only data frames
+    if(((data[1] & 0x43) == 0x41) && // Data Frame, compressed PAN ID
+       ((data[2] & 0xCC) == 0x88)) // Short Address for both source and dest
+    {
+        // seq number data[3]
+        uint16_t pan_id = data[4] | (data[5] << 8);
+        if(pan_id != ieee802154_ctrl.panid)
+            return false;
+
+        uint16_t dst_addr = data[6] | (data[7] << 8);
+        if(dst_addr != ieee802154_ctrl.short_addr && dst_addr != 0xFFFF)
+            return false;
+
+        uint16_t src_addr = data[8] | (data[9] << 8);
+
+        msg->src_addr = src_addr;
+        msg->seq_num = data[3];
+        msg->len = len - 11;
+    
+        memcpy(msg->data, &data[10], msg->len);
+        
+        return true;
+    }
+
+    return false;
+}
 void esp_ieee802154_receive_done(uint8_t *data, esp_ieee802154_frame_info_t *frame_info)
 {
     #if DBG_ON == 1
@@ -257,16 +337,57 @@ void esp_ieee802154_receive_done(uint8_t *data, esp_ieee802154_frame_info_t *fra
     mp_hal_stdout_tx_str("\n");
     #endif
 
+    ieee802154_frame_t msg;
+
+    if(ieee802154_frame_filter(data, frame_info, &msg))
+    {
+        if(xQueueSendToBackFromISR(ieee802154_ctrl.rx_queue, &msg, NULL) != pdPASS)
+        {
+            mp_printf(&mp_plat_print, "Queue full !\n");
+        }
+    }
+
+    esp_ieee802154_receive_handle_done(data);
+}
+
+static mp_obj_t ieee802154_recv_msg(mp_obj_t timeout_ms_obj)
+{
+    ieee802154_check_if_enabled();
+
+    uint32_t timeout_ms = mp_obj_get_int(timeout_ms_obj);
+    
+    ieee802154_frame_t msg;
+
+    if (xQueueReceive(ieee802154_ctrl.rx_queue, &msg, pdMS_TO_TICKS(timeout_ms)) != pdPASS)
+    {
+        mp_raise_type(&mp_type_QueueEmpty);
+    }
+    return mp_obj_new_bytes(msg.data, msg.len);
+
+}
+
+static void ieee802154_set_tx_status(bool in_progress)
+{
+    ieee802154_ctrl.tx_ok = in_progress;
+}
+
+static bool ieee802154_get_tx_status(void)
+{
+    return ieee802154_ctrl.tx_ok;
 }
 
 void esp_ieee802154_transmit_done(const uint8_t *frame, const uint8_t *ack, esp_ieee802154_frame_info_t *ack_frame_info)
 {
-    mp_hal_stdout_tx_str("==> Transmit done callback called\n");
+    ieee802154_set_tx_status(true);
+    xSemaphoreGiveFromISR(ieee802154_ctrl.tx_sem, NULL);
+    //mp_hal_stdout_tx_str("==> Transmit done callback called\n");
 }
 
 void esp_ieee802154_transmit_failed(const uint8_t *frame, esp_ieee802154_tx_error_t error)
 {
-    mp_printf(&mp_plat_print, "Transmit failed callback called %d\n",error);
+    ieee802154_set_tx_status(false);
+    xSemaphoreGiveFromISR(ieee802154_ctrl.tx_sem, NULL);
+    //mp_printf(&mp_plat_print, "Transmit failed callback called %d\n",error);
 }
 
 static mp_obj_t ieee802154_send_msg(mp_obj_t payload_obj, mp_obj_t dst_addr_obj, mp_obj_t retry_obj)
@@ -309,14 +430,24 @@ static mp_obj_t ieee802154_send_msg(mp_obj_t payload_obj, mp_obj_t dst_addr_obj,
     mp_hal_stdout_tx_str("\n");
     #endif
 
-    esp_err_t status = esp_ieee802154_transmit(ieee802154_ctrl.tx, true);
+    esp_err_t ret = esp_ieee802154_transmit(ieee802154_ctrl.tx, true);
+    bool status = (ret == ESP_OK);
 
-    if(status != ESP_OK)
+    // wait ack
+    if(status)
     {
-        mp_printf(&mp_plat_print,"=> %s\n",esp_err_to_name(status));
-     }
+        ieee802154_set_tx_status(false);
+        if((xSemaphoreTake(ieee802154_ctrl.tx_sem, pdMS_TO_TICKS(ieee802154_ctrl.tx_timeout_ms)) == pdTRUE) && (ieee802154_get_tx_status() == true))
+        {
+            status = true;
+        }
+    }
+    else
+    {
+        mp_printf(&mp_plat_print,"=> %s\n",esp_err_to_name(ret));
+    }
 
-    return mp_obj_new_bool(status == ESP_OK);
+    return mp_obj_new_bool(status);
 }
 
 static MP_DEFINE_CONST_FUN_OBJ_0(ieee802154_init_obj, ieee802154_init);
@@ -329,6 +460,7 @@ static MP_DEFINE_CONST_FUN_OBJ_1(ieee802154_set_short_addr_obj, ieee802154_set_s
 static MP_DEFINE_CONST_FUN_OBJ_0(ieee802154_get_short_addr_obj, ieee802154_get_short_addr);
 static MP_DEFINE_CONST_FUN_OBJ_3(ieee802154_send_msg_obj, ieee802154_send_msg);
 static MP_DEFINE_CONST_FUN_OBJ_1(ieee802154_set_tx_pwr_obj, ieee802154_set_tx_pwr);
+static MP_DEFINE_CONST_FUN_OBJ_1(ieee802154_recv_msg_obj, ieee802154_recv_msg);
 
 static const mp_rom_map_elem_t ieee802154_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_ieee802154) },
@@ -342,6 +474,8 @@ static const mp_rom_map_elem_t ieee802154_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_get_short_addr), MP_ROM_PTR(&ieee802154_get_short_addr_obj) },
     { MP_ROM_QSTR(MP_QSTR_send_msg), MP_ROM_PTR(&ieee802154_send_msg_obj) },
     { MP_ROM_QSTR(MP_QSTR_set_tx_pwr), MP_ROM_PTR(&ieee802154_set_tx_pwr_obj) },
+    { MP_ROM_QSTR(MP_QSTR_recv_msg), MP_ROM_PTR(&ieee802154_recv_msg_obj) },
+    { MP_ROM_QSTR(MP_QSTR_QueueEmpty), MP_ROM_PTR(&mp_type_QueueEmpty) },
 };
 
 static MP_DEFINE_CONST_DICT(ieee802154_module_globals, ieee802154_module_globals_table);
