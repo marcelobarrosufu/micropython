@@ -49,7 +49,7 @@
 
 #if MICROPY_PY_IEEE802154
 
-#define DBG_ON          1
+#define DBG_ON          0
 #define MAX_FRAME_LEN   127
 #define RX_QUEUE_LENGTH 5
 
@@ -85,7 +85,7 @@ static ieee802154_ctrl_t ieee802154_ctrl =
     .enabled = false,
     .seq_num = 0,
     .tx_pwr = 20,
-    .tx_timeout_ms = 100,
+    .tx_timeout_ms = 200,
     .tx_ok = false,
 };
 
@@ -123,11 +123,19 @@ static mp_obj_t ieee802154_init(void)
             {
                 if(esp_ieee802154_enable() == ESP_OK)
                 {
-                    esp_ieee802154_set_ack_timeout(2*16);
+                    //esp_ieee802154_set_cca_threshold(-94);
+                    esp_ieee802154_set_ack_timeout(200*16);
                     esp_ieee802154_set_promiscuous(false);
                     esp_ieee802154_set_rx_when_idle(true);
                     esp_ieee802154_set_coordinator(false);
-                    esp_ieee802154_receive();
+                    //esp_ieee802154_receive();
+                    // esp_ieee802154_coex_config_t coex = 
+                    // {
+                    //     .idle = IEEE802154_HIGH,
+                    //     .txrx = IEEE802154_HIGH,
+                    //     .txrx_at = IEEE802154_HIGH,
+                    // };
+                    // esp_ieee802154_set_coex_config(coex);
                     ieee802154_set_rx_status(true);
                 
                     ieee802154_ctrl.enabled = true;
@@ -275,6 +283,18 @@ static mp_obj_t ieee802154_set_short_addr(mp_obj_t short_addr_obj)
     if (ret == ESP_OK) 
     {
         ieee802154_ctrl.short_addr = (uint16_t)short_addr;
+
+        // mp_printf(&mp_plat_print, "\nShort addr %02X%02X\n",short_addr&0xFF,(short_addr>>8)&0xFF);
+        // uint8_t eui64[8] = { 0 };
+        // eui64[0] = short_addr & 0xFF;
+        // eui64[1] = (short_addr >> 8) & 0xFF;
+        // esp_ieee802154_set_extended_address(eui64);
+        
+        // esp_ieee802154_get_extended_address(eui64);
+        // mp_printf(&mp_plat_print, "\nExt addr ");
+        // for(int p = 0 ; p < 8 ; p++)
+        //     mp_printf(&mp_plat_print, "%02X", eui64[p]);
+        // mp_printf(&mp_plat_print, "\n ");
     } 
     else
     {
@@ -344,11 +364,21 @@ static bool ieee802154_frame_filter(uint8_t *data, esp_ieee802154_frame_info_t *
 void esp_ieee802154_receive_done(uint8_t *data, esp_ieee802154_frame_info_t *frame_info)
 {
     #if DBG_ON == 1
-    mp_hal_stdout_tx_str("RX ");
-    for(size_t pos = 0 ; pos < data[0] ; pos++)
+    mp_printf(&mp_plat_print, "RX ");
+
+    if((data[1] & 0x07) == 0x02)
+    {
+        mp_printf(&mp_plat_print, "ACK %02X ",data[3]);
+    }
+    else if((data[1] & 0x07) == 0x01)
+    {
+        mp_printf(&mp_plat_print, "DAT %02X ",data[3]);
+    }
+
+    for(size_t pos = 1 ; pos < data[0] ; pos++)
         mp_printf(&mp_plat_print, "%02X", data[pos]);
 
-    mp_hal_stdout_tx_str("\n");
+    mp_printf(&mp_plat_print, "\n");
     #endif
 
     // only when false app is waiting for a message
@@ -368,6 +398,7 @@ static mp_obj_t ieee802154_recv_msg(mp_obj_t timeout_ms_obj)
 
     uint32_t timeout_ms = mp_obj_get_int(timeout_ms_obj);
     
+    esp_ieee802154_receive();
     ieee802154_set_rx_status(false);
 
     if((xSemaphoreTake(ieee802154_ctrl.rx_sem, pdMS_TO_TICKS(timeout_ms)) == pdTRUE) && (ieee802154_get_rx_status() == true))
@@ -398,15 +429,16 @@ static bool ieee802154_get_tx_status(void)
 void esp_ieee802154_transmit_done(const uint8_t *frame, const uint8_t *ack, esp_ieee802154_frame_info_t *ack_frame_info)
 {
     ieee802154_set_tx_status(true);
-    xSemaphoreGiveFromISR(ieee802154_ctrl.tx_sem, NULL);
-    //mp_hal_stdout_tx_str("==> Transmit done callback called\n");
+    mp_printf(&mp_plat_print, "0");
+    //xSemaphoreGiveFromISR(ieee802154_ctrl.tx_sem, NULL);
 }
 
 void esp_ieee802154_transmit_failed(const uint8_t *frame, esp_ieee802154_tx_error_t error)
 {
     ieee802154_set_tx_status(false);
-    xSemaphoreGiveFromISR(ieee802154_ctrl.tx_sem, NULL);
-    //mp_printf(&mp_plat_print, "Transmit failed callback called %d\n",error);
+    char err[] = {"0123456"};
+    mp_printf(&mp_plat_print, "%c",err[error]);
+    //xSemaphoreGiveFromISR(ieee802154_ctrl.tx_sem, NULL);
 }
 
 static mp_obj_t ieee802154_send_msg(mp_obj_t payload_obj, mp_obj_t dst_addr_obj, mp_obj_t retry_obj)
@@ -442,21 +474,29 @@ static mp_obj_t ieee802154_send_msg(mp_obj_t payload_obj, mp_obj_t dst_addr_obj,
     memcpy(&ieee802154_ctrl.tx[10], payload, len);
 
     #if DBG_ON == 1
-    mp_hal_stdout_tx_str("TX ");
+    mp_printf(&mp_plat_print, "TX ");
+
+    if((ieee802154_ctrl.tx[1] & 0x07) == 0x01)
+    {
+        mp_printf(&mp_plat_print, "DAT %02X ",ieee802154_ctrl.tx[3]);
+    }
+
     for(size_t pos = 0 ; pos < (len+10) ; pos++)
         mp_printf(&mp_plat_print, "%02X", ieee802154_ctrl.tx[pos]);
 
-    mp_hal_stdout_tx_str("\n");
+    mp_printf(&mp_plat_print, "\n");
     #endif
 
+    ieee802154_set_tx_status(false);
     esp_err_t ret = esp_ieee802154_transmit(ieee802154_ctrl.tx, true);
     bool status = (ret == ESP_OK);
 
     // wait ack
     if(status)
     {
-        ieee802154_set_tx_status(false);
-        if((xSemaphoreTake(ieee802154_ctrl.tx_sem, pdMS_TO_TICKS(ieee802154_ctrl.tx_timeout_ms)) == pdTRUE) && (ieee802154_get_tx_status() == true))
+        //if((xSemaphoreTake(ieee802154_ctrl.tx_sem, pdMS_TO_TICKS(ieee802154_ctrl.tx_timeout_ms)) == pdTRUE) && (ieee802154_get_tx_status() == true))
+        vTaskDelay(pdMS_TO_TICKS(10)); 
+        if(ieee802154_get_tx_status() == true)
         {
             status = true;
         }
