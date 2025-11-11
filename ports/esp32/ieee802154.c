@@ -47,8 +47,8 @@
 #include "py/runtime.h"
 #include "py/mphal.h"
 
-#if MICROPY_PY_IEEE802154
 
+#define SNIFFER         1
 #define DBG_ON          0
 #define MAX_FRAME_LEN   127
 #define RX_QUEUE_LENGTH 5
@@ -124,11 +124,15 @@ static mp_obj_t ieee802154_init(void)
                 if(esp_ieee802154_enable() == ESP_OK)
                 {
                     //esp_ieee802154_set_cca_threshold(-94);
-                    esp_ieee802154_set_ack_timeout(200*16);
+                    esp_ieee802154_set_ack_timeout(2*16);
+#if SNIFFER == 1
+                    esp_ieee802154_set_promiscuous(true);
+#else
                     esp_ieee802154_set_promiscuous(false);
+#endif
                     esp_ieee802154_set_rx_when_idle(true);
                     esp_ieee802154_set_coordinator(false);
-                    //esp_ieee802154_receive();
+                    esp_ieee802154_receive();
                     // esp_ieee802154_coex_config_t coex = 
                     // {
                     //     .idle = IEEE802154_HIGH,
@@ -381,12 +385,18 @@ void esp_ieee802154_receive_done(uint8_t *data, esp_ieee802154_frame_info_t *fra
     mp_printf(&mp_plat_print, "\n");
     #endif
 
-    // only when false app is waiting for a message
-    if(ieee802154_get_rx_status() == false)
-    {
-        ieee802154_set_rx_status(ieee802154_frame_filter(data, frame_info, &msg));
-        xSemaphoreGiveFromISR(ieee802154_ctrl.rx_sem, NULL);
-    }
+    #if SNIFFER == 1
+    for(size_t pos = 1 ; pos < data[0] ; pos++)
+        mp_printf(&mp_plat_print, "%02X", data[pos]);
+    mp_printf(&mp_plat_print, "\n");
+    #else        
+        // only when false app is waiting for a message
+        if(ieee802154_get_rx_status() == false)
+        {
+            ieee802154_set_rx_status(ieee802154_frame_filter(data, frame_info, &msg));
+            xSemaphoreGiveFromISR(ieee802154_ctrl.rx_sem, NULL);
+        }
+    #endif
 
     esp_ieee802154_receive_handle_done(data);
 }
@@ -430,7 +440,7 @@ void esp_ieee802154_transmit_done(const uint8_t *frame, const uint8_t *ack, esp_
 {
     ieee802154_set_tx_status(true);
     mp_printf(&mp_plat_print, "0");
-    //xSemaphoreGiveFromISR(ieee802154_ctrl.tx_sem, NULL);
+    xSemaphoreGiveFromISR(ieee802154_ctrl.tx_sem, NULL);
 }
 
 void esp_ieee802154_transmit_failed(const uint8_t *frame, esp_ieee802154_tx_error_t error)
@@ -438,7 +448,7 @@ void esp_ieee802154_transmit_failed(const uint8_t *frame, esp_ieee802154_tx_erro
     ieee802154_set_tx_status(false);
     char err[] = {"0123456"};
     mp_printf(&mp_plat_print, "%c",err[error]);
-    //xSemaphoreGiveFromISR(ieee802154_ctrl.tx_sem, NULL);
+    xSemaphoreGiveFromISR(ieee802154_ctrl.tx_sem, NULL);
 }
 
 static mp_obj_t ieee802154_send_msg(mp_obj_t payload_obj, mp_obj_t dst_addr_obj, mp_obj_t retry_obj)
@@ -494,8 +504,8 @@ static mp_obj_t ieee802154_send_msg(mp_obj_t payload_obj, mp_obj_t dst_addr_obj,
     // wait ack
     if(status)
     {
-        //if((xSemaphoreTake(ieee802154_ctrl.tx_sem, pdMS_TO_TICKS(ieee802154_ctrl.tx_timeout_ms)) == pdTRUE) && (ieee802154_get_tx_status() == true))
-        vTaskDelay(pdMS_TO_TICKS(10)); 
+        if((xSemaphoreTake(ieee802154_ctrl.tx_sem, pdMS_TO_TICKS(ieee802154_ctrl.tx_timeout_ms)) == pdTRUE) && (ieee802154_get_tx_status() == true))
+        //vTaskDelay(pdMS_TO_TICKS(10)); 
         if(ieee802154_get_tx_status() == true)
         {
             status = true;
@@ -546,6 +556,3 @@ const mp_obj_module_t ieee802154_user_cmodule = {
 
 // Registro no MicroPython
 MP_REGISTER_MODULE(MP_QSTR_ieee802154, ieee802154_user_cmodule);
-
-
-#endif // MICROPY_PY_IEEE802154
