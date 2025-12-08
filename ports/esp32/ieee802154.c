@@ -48,7 +48,7 @@
 #include "py/mphal.h"
 
 
-#define SNIFFER         1
+#define SNIFFER         0
 #define DBG_ON          0
 #define MAX_FRAME_LEN   127
 #define RX_QUEUE_LENGTH 5
@@ -355,7 +355,7 @@ static bool ieee802154_frame_filter(uint8_t *data, esp_ieee802154_frame_info_t *
         uint16_t src_addr = data[8] | (data[9] << 8);
 
         msg->src_addr = src_addr;
-        msg->dst_addr = dst_addr;
+        //msg->dst_addr = dst_addr;
         msg->seq_num = data[3];
         msg->len = len - 11;
 
