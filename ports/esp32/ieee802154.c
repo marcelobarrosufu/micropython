@@ -355,6 +355,7 @@ static bool ieee802154_frame_filter(uint8_t *data, esp_ieee802154_frame_info_t *
         uint16_t src_addr = data[8] | (data[9] << 8);
 
         msg->src_addr = src_addr;
+        msg->dst_addr = dst_addr;
         msg->seq_num = data[3];
         msg->len = len - 11;
 
@@ -389,7 +390,7 @@ void esp_ieee802154_receive_done(uint8_t *data, esp_ieee802154_frame_info_t *fra
     for(size_t pos = 1 ; pos < data[0] ; pos++)
         mp_printf(&mp_plat_print, "%02X", data[pos]);
     mp_printf(&mp_plat_print, "\n");
-    #else        
+    #else      
         // only when false app is waiting for a message
         if(ieee802154_get_rx_status() == false)
         {
@@ -439,15 +440,24 @@ static bool ieee802154_get_tx_status(void)
 void esp_ieee802154_transmit_done(const uint8_t *frame, const uint8_t *ack, esp_ieee802154_frame_info_t *ack_frame_info)
 {
     ieee802154_set_tx_status(true);
-    mp_printf(&mp_plat_print, "0");
-    xSemaphoreGiveFromISR(ieee802154_ctrl.tx_sem, NULL);
+    mp_printf(&mp_plat_print, "TX done %c%c",(ack?'A':' '),(frame?'F':' '));
+    if(ack)
+    {
+        esp_ieee802154_receive_handle_done(ack);
+    }
+    if(frame)
+    {
+        ieee802154_set_tx_status(true);
+        xSemaphoreGiveFromISR(ieee802154_ctrl.tx_sem, NULL);
+    }
 }
 
 void esp_ieee802154_transmit_failed(const uint8_t *frame, esp_ieee802154_tx_error_t error)
 {
     ieee802154_set_tx_status(false);
-    char err[] = {"0123456"};
-    mp_printf(&mp_plat_print, "%c",err[error]);
+	esp_ieee802154_state_t s = esp_ieee802154_get_state();
+	uint8_t err[] = {'0', '1', '2', '3', '4', '5'}; 
+    mp_printf(&mp_plat_print,"TX error %c %d",err[error],s);
     xSemaphoreGiveFromISR(ieee802154_ctrl.tx_sem, NULL);
 }
 
@@ -481,7 +491,7 @@ static mp_obj_t ieee802154_send_msg(mp_obj_t payload_obj, mp_obj_t dst_addr_obj,
     ieee802154_ctrl.tx[8] = (uint8_t)(ieee802154_ctrl.short_addr & 0xFF); // Src Address LSB
     ieee802154_ctrl.tx[9] = (uint8_t)(ieee802154_ctrl.short_addr >> 8);   // Src Address MSB
 
-    memcpy(&ieee802154_ctrl.tx[10], payload, len);
+    memcpy(&(ieee802154_ctrl.tx[10]), payload, len);
 
     #if DBG_ON == 1
     mp_printf(&mp_plat_print, "TX ");
