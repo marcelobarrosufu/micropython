@@ -132,16 +132,7 @@ static mp_obj_t ieee802154_init(void)
 #endif
                     esp_ieee802154_set_rx_when_idle(true);
                     esp_ieee802154_set_coordinator(false);
-                    esp_ieee802154_receive();
-                    // esp_ieee802154_coex_config_t coex = 
-                    // {
-                    //     .idle = IEEE802154_HIGH,
-                    //     .txrx = IEEE802154_HIGH,
-                    //     .txrx_at = IEEE802154_HIGH,
-                    // };
-                    // esp_ieee802154_set_coex_config(coex);
-                    ieee802154_set_rx_status(true);
-                
+                    esp_ieee802154_receive();               
                     ieee802154_ctrl.enabled = true;
                 }
                 else
@@ -439,8 +430,8 @@ static bool ieee802154_get_tx_status(void)
 
 void esp_ieee802154_transmit_done(const uint8_t *frame, const uint8_t *ack, esp_ieee802154_frame_info_t *ack_frame_info)
 {
-    ieee802154_set_tx_status(true);
     mp_printf(&mp_plat_print, "TX done %c%c",(ack?'A':' '),(frame?'F':' '));
+
     if(ack)
     {
         esp_ieee802154_receive_handle_done(ack);
@@ -514,11 +505,11 @@ static mp_obj_t ieee802154_send_msg(mp_obj_t payload_obj, mp_obj_t dst_addr_obj,
     // wait ack
     if(status)
     {
-        if((xSemaphoreTake(ieee802154_ctrl.tx_sem, pdMS_TO_TICKS(ieee802154_ctrl.tx_timeout_ms)) == pdTRUE) && (ieee802154_get_tx_status() == true))
-        //vTaskDelay(pdMS_TO_TICKS(10)); 
-        if(ieee802154_get_tx_status() == true)
+        status = false;
+        if(xSemaphoreTake(ieee802154_ctrl.tx_sem, pdMS_TO_TICKS(ieee802154_ctrl.tx_timeout_ms)) == pdTRUE)
         {
-            status = true;
+             if(ieee802154_get_tx_status() == true)
+                status = true;
         }
     }
     else
