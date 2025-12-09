@@ -124,7 +124,7 @@ static mp_obj_t ieee802154_init(void)
                 if(esp_ieee802154_enable() == ESP_OK)
                 {
                     //esp_ieee802154_set_cca_threshold(-94);
-                    esp_ieee802154_set_ack_timeout(200*16);
+                    esp_ieee802154_set_ack_timeout(120*16);
 #if SNIFFER == 1
                     esp_ieee802154_set_promiscuous(true);
 #else
@@ -499,31 +499,18 @@ static mp_obj_t ieee802154_send_msg(mp_obj_t payload_obj, mp_obj_t dst_addr_obj,
 
     mp_printf(&mp_plat_print, "\n");
     #endif
-	
-    esp_ieee802154_state_t s = esp_ieee802154_get_state();
-    mp_printf(&mp_plat_print,"S1: %d\n",s);
 
     ieee802154_set_tx_status(false);
     esp_err_t ret = esp_ieee802154_transmit(ieee802154_ctrl.tx, true);
     bool status = (ret == ESP_OK);
 
-    s = esp_ieee802154_get_state();
-    mp_printf(&mp_plat_print,"S2: %d\n",s);
-
     // wait ack
     if(status)
     {
-        mp_printf(&mp_plat_print,"=> A\n");
         if(xSemaphoreTake(ieee802154_ctrl.tx_sem, pdMS_TO_TICKS(ieee802154_ctrl.tx_timeout_ms)) == pdTRUE)
         {
-            mp_printf(&mp_plat_print,"=> B\n");
-
-                s = esp_ieee802154_get_state();
-                mp_printf(&mp_plat_print,"S3: %d\n",s);
-
              if(ieee802154_get_tx_status() == true)
              {
-                mp_printf(&mp_plat_print,"=> C\n");
                 status = true;
              }
         }
