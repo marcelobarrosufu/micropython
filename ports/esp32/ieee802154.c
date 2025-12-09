@@ -124,7 +124,7 @@ static mp_obj_t ieee802154_init(void)
                 if(esp_ieee802154_enable() == ESP_OK)
                 {
                     //esp_ieee802154_set_cca_threshold(-94);
-                    esp_ieee802154_set_ack_timeout(2*16);
+                    esp_ieee802154_set_ack_timeout(200*16);
 #if SNIFFER == 1
                     esp_ieee802154_set_promiscuous(true);
 #else
@@ -134,6 +134,7 @@ static mp_obj_t ieee802154_init(void)
                     esp_ieee802154_set_coordinator(false);
                     esp_ieee802154_receive();               
                     ieee802154_ctrl.enabled = true;
+                    mp_printf(&mp_plat_print,"IEEE 802.15.4 init done\n");
                 }
                 else
                 {
@@ -382,15 +383,16 @@ void esp_ieee802154_receive_done(uint8_t *data, esp_ieee802154_frame_info_t *fra
         mp_printf(&mp_plat_print, "%02X", data[pos]);
     mp_printf(&mp_plat_print, "\n");
     #else      
-        // only when false app is waiting for a message
-        if(ieee802154_get_rx_status() == false)
-        {
-            ieee802154_set_rx_status(ieee802154_frame_filter(data, frame_info, &msg));
-            xSemaphoreGiveFromISR(ieee802154_ctrl.rx_sem, NULL);
-        }
+    esp_ieee802154_receive_handle_done(data);
+
+    // only when false app is waiting for a message
+    if(ieee802154_get_rx_status() == false)
+    {
+        ieee802154_set_rx_status(ieee802154_frame_filter(data, frame_info, &msg));
+        xSemaphoreGiveFromISR(ieee802154_ctrl.rx_sem, NULL);
+    }
     #endif
 
-    esp_ieee802154_receive_handle_done(data);
 }
 
 static mp_obj_t ieee802154_recv_msg(mp_obj_t timeout_ms_obj)
@@ -430,7 +432,7 @@ static bool ieee802154_get_tx_status(void)
 
 void esp_ieee802154_transmit_done(const uint8_t *frame, const uint8_t *ack, esp_ieee802154_frame_info_t *ack_frame_info)
 {
-    mp_printf(&mp_plat_print, "TX done %c%c",(ack?'A':' '),(frame?'F':' '));
+    mp_printf(&mp_plat_print, "TXOK %c%c\n",(ack?'A':' '),(frame?'F':' '));
 
     if(ack)
     {
@@ -448,7 +450,7 @@ void esp_ieee802154_transmit_failed(const uint8_t *frame, esp_ieee802154_tx_erro
     ieee802154_set_tx_status(false);
 	esp_ieee802154_state_t s = esp_ieee802154_get_state();
 	uint8_t err[] = {'0', '1', '2', '3', '4', '5'}; 
-    mp_printf(&mp_plat_print,"TX error %c %d",err[error],s);
+    mp_printf(&mp_plat_print,"TXER %c %d\n",err[error],s);
     xSemaphoreGiveFromISR(ieee802154_ctrl.tx_sem, NULL);
 }
 
@@ -497,19 +499,33 @@ static mp_obj_t ieee802154_send_msg(mp_obj_t payload_obj, mp_obj_t dst_addr_obj,
 
     mp_printf(&mp_plat_print, "\n");
     #endif
+	
+    esp_ieee802154_state_t s = esp_ieee802154_get_state();
+    mp_printf(&mp_plat_print,"S1: %d\n",s);
 
     ieee802154_set_tx_status(false);
     esp_err_t ret = esp_ieee802154_transmit(ieee802154_ctrl.tx, true);
     bool status = (ret == ESP_OK);
 
+    s = esp_ieee802154_get_state();
+    mp_printf(&mp_plat_print,"S2: %d\n",s);
+
     // wait ack
     if(status)
     {
-        status = false;
+        mp_printf(&mp_plat_print,"=> A\n");
         if(xSemaphoreTake(ieee802154_ctrl.tx_sem, pdMS_TO_TICKS(ieee802154_ctrl.tx_timeout_ms)) == pdTRUE)
         {
+            mp_printf(&mp_plat_print,"=> B\n");
+
+                s = esp_ieee802154_get_state();
+                mp_printf(&mp_plat_print,"S3: %d\n",s);
+
              if(ieee802154_get_tx_status() == true)
+             {
+                mp_printf(&mp_plat_print,"=> C\n");
                 status = true;
+             }
         }
     }
     else
